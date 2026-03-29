@@ -68,11 +68,11 @@ if __name__ == "__main__":
     df_train = df[train_idx].copy()
     df_test = df[~train_idx].copy()
 
-    import example_script  # your strategy file
+    import python_files.example_script_PCA as example_script_PCA  # your strategy file
 
     wealth_seq = walk_forward(
-        example_script.trading_algorithm,
-        example_script.initialise_state,
+        example_script_PCA.trading_algorithm,
+        example_script_PCA.initialise_state,
         df_train,
         df_test,
         cost_rate=0.0005,
