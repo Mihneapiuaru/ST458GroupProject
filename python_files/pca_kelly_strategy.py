@@ -32,6 +32,9 @@ AR_LAG_SPEC: Tuple[Tuple[int, ...], ...] = ((1, 5), (2,), (1,), (30,))
 GROSS_CAP = 1.0
 MAX_ABS_WEIGHT = 1.0
 KELLY_FRACTION = 0.25
+# Match walk_forward.py default transaction cost (5 bps) as a turnover penalty.
+TURNOVER_PENALTY = 0.0005
+TURNOVER_SMOOTH_EPS = 1e-8
 
 # Numerical safeguards
 IDIO_VAR_FLOOR = 1e-8
@@ -175,10 +178,18 @@ def _solve_kelly_markowitz(
     w0 = _project_weights(prev_weights)
 
     def objective(w: np.ndarray) -> float:
-        return float(0.5 * w @ cov @ w - mu_eff @ w)
+        turnover = np.sqrt((w - prev_weights) ** 2 + TURNOVER_SMOOTH_EPS)
+        return float(
+            0.5 * w @ cov @ w
+            - mu_eff @ w
+            + TURNOVER_PENALTY * np.sum(turnover)
+        )
 
     def objective_jac(w: np.ndarray) -> np.ndarray:
-        return cov @ w - mu_eff
+        turnover_grad = (w - prev_weights) / np.sqrt(
+            (w - prev_weights) ** 2 + TURNOVER_SMOOTH_EPS
+        )
+        return cov @ w - mu_eff + TURNOVER_PENALTY * turnover_grad
 
     constraints = (
         {
@@ -202,7 +213,7 @@ def _solve_kelly_markowitz(
             jac=objective_jac,
             bounds=bounds,
             constraints=constraints,
-            options={"maxiter": 80, "ftol": 1e-6, "disp": False},
+            options={"maxiter": 100, "ftol": 1e-6, "disp": False},
         )
     except Exception:
         return w0
@@ -365,7 +376,12 @@ def trading_algorithm(new_data: pd.DataFrame, state: State) -> tuple[np.ndarray,
         return trades.astype(float), state
 
     # Convert optimization weights to target dollar positions.
-    opt_weights = _solve_kelly_markowitz(mu=mu, cov=cov, prev_weights=state.target_weights)
+    current_weights = np.zeros_like(state.positions)
+    if state.wealth > WEALTH_FLOOR:
+        current_weights = state.positions / state.wealth
+        current_weights = np.where(np.isfinite(current_weights), current_weights, 0.0)
+
+    opt_weights = _solve_kelly_markowitz(mu=mu, cov=cov, prev_weights=current_weights)
     target_positions = opt_weights * state.wealth
 
     trades = target_positions - state.positions

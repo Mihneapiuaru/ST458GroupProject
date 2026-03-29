@@ -44,6 +44,7 @@ def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
             r1d = price / price_lag1 - 1.0
 
             daily_pnl[i] = np.sum(positions * r1d) - cost_rate * np.sum(np.abs(trades))
+            print(f"PnL on day {dt} is {daily_pnl[i]}")
 
             # update our positions for each ticker symbol
             positions = positions * (1.0 + r1d) + trades
@@ -62,13 +63,14 @@ def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
 if __name__ == "__main__":
     df = pd.read_csv("df_train.csv")
     df["date"] = pd.to_datetime(df["date"]).dt.date
+    df = df[df["date"] < pd.to_datetime("2013-01-01").date()]
 
     # train test split configuration
     train_idx = df["date"] < pd.to_datetime("2012-01-01").date()
     df_train = df[train_idx].copy()
     df_test = df[~train_idx].copy()
 
-    import python_files.example_script_PCA as example_script_PCA  # your strategy file
+    import example_script_PCA as example_script_PCA  # your strategy file
 
     wealth_seq = walk_forward(
         example_script_PCA.trading_algorithm,
@@ -79,3 +81,4 @@ if __name__ == "__main__":
     )
 
     print("log wealth =", np.log(wealth_seq[-1]) if wealth_seq[-1] > 0 else -np.inf)
+    print(f"ending wealth of original scale is {np.round(wealth_seq[-1], 3)} with total PnL {np.round((wealth_seq[-1] - 1)*100,2)}%")
