@@ -7,7 +7,7 @@ import pandas as pd
 def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
     # Initialise state
     state = initialiser(df_train)
-
+    
     test_dates = sorted(df_test["date"].unique())
     n_test_dates = len(test_dates)
 

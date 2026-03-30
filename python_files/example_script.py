@@ -52,12 +52,12 @@ def initialise_state(data: pd.DataFrame) -> State:
 
     # Fill with the last LOOKBACK closes from training, newest at row 0
     # R code uses: date <- dates[length(dates) - i + 1], i=1..LOOKBACK
-    sym_to_idx = {s: i for i, s in enumerate(symbols)}
+    sym_to_idx = {s: i for i, s in enumerate(symbols)} # Mapping between the symbols and index they should occupy
     for i in range(LOOKBACK):
         dt = dates[len(dates) - 1 - i]  # most recent, then backwards
-        sub = df.loc[df["date"] == dt, ["symbol", "close"]]
+        sub = df.loc[df["date"] == dt, ["symbol", "close"]] # Entries for the current date
         for _, row in sub.iterrows():
-            lagged_price[i, sym_to_idx[row["symbol"]]] = float(row["close"])
+            lagged_price[i, sym_to_idx[row["symbol"]]] = float(row["close"]) # Add the close to the corresponding index of the current symbol
 
     positions = np.zeros(NUM_SYMBOLS, dtype=float)
     return State(symbols=symbols, lagged_price=lagged_price, wealth=1.0, positions=positions)
