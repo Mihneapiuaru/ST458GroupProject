@@ -3,6 +3,7 @@
 
 import numpy as np
 import pandas as pd
+import pickle
 
 def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
     """strategy and initialiser is what we create based on developed strategy,
@@ -20,12 +21,17 @@ def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
     positions = np.zeros(num_symbols)
     daily_pnl = np.zeros(n_test_dates)
 
+    # collector variables for betas
+    betas = []
+
     # loop through the test dates day by day
     for i, dt in enumerate(test_dates):
 
         # one daily dataframe (long format)
         new_data = df_test[df_test["date"] == dt]
         trades, state = strategy(new_data, state)
+
+        betas.append(state.beta)
 
         # first oos trading day we just lock our positions and pay the fee
         if i == 0:
@@ -57,7 +63,7 @@ def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
         first_idx = np.where(wealth_seq <= 0)[0][0]
         wealth_seq[first_idx:] = 0.0
 
-    return wealth_seq
+    return wealth_seq, betas
 
 
 if __name__ == "__main__":
@@ -70,16 +76,19 @@ if __name__ == "__main__":
     df_train = df[train_idx].copy()
     df_test = df[~train_idx].copy()
 
-    import example_script_PCA as example_script_PCA  # your strategy file
+    import example_script_PCA as example_script_PCA
     import example_script
 
-    wealth_seq = walk_forward(
+    wealth_seq, betas = walk_forward(
         example_script_PCA.trading_algorithm,
         example_script_PCA.initialise_state,
         df_train,
         df_test,
         cost_rate=0.0005,
     )
+
+    with open('betas.pkl', 'wb') as f:
+        pickle.dump(betas, f)
 
     print("log wealth =", np.log(wealth_seq[-1]) if wealth_seq[-1] > 0 else -np.inf)
     print(f"ending wealth of original scale is {np.round(wealth_seq[-1], 3)} with total PnL {np.round((wealth_seq[-1] - 1)*100,2)}%")

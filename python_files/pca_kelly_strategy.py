@@ -31,11 +31,12 @@ NUM_FACTORS = 3 # 3 factors has the highest PnL in 2012 validation (way above th
 AR_LAG_SPEC: Tuple[Tuple[int, ...], ...] = ((2,), (1,), (1,2), (30,))
 
 # Allocation controls
-GROSS_CAP = 1.0
-MAX_ABS_WEIGHT = 1.0 # add leverage if needed
+GROSS_CAP = 1.0 # add leverage if needed (GROSS_CAP = 1.0 means we can use 100% of our wealth in trading)
+MAX_ABS_WEIGHT = 1.0 # maximal weight put on one asset (long or short)
 KELLY_FRACTION = 0.25 # What is a Kelly Fraction?
 
-# Match walk_forward.py default transaction cost (5 bps) as a turnover penalty.
+# Match project description transaction cost (5 bps) as a turnover penalty
+# we include the turnover penalty directly in the optimization
 TURNOVER_PENALTY = 0.0005
 TURNOVER_SMOOTH_EPS = 1e-8
 
@@ -180,7 +181,11 @@ def _solve_kelly_markowitz(
 
     w0 = _project_weights(prev_weights)
 
+    # objective function: optimize the profit, considering the traded volume and risk penalties
     def objective(w: np.ndarray) -> float:
+
+        # Turnover L_2 style penalty for the gradient-based optimizer to handle it better
+        # include a small smoothing constant as numeric safeguard
         turnover = np.sqrt((w - prev_weights) ** 2 + TURNOVER_SMOOTH_EPS)
         return float(
             0.5 * w @ cov @ w
@@ -188,12 +193,16 @@ def _solve_kelly_markowitz(
             + TURNOVER_PENALTY * np.sum(turnover)
         )
 
+    # gradient function of the objective explicitly given to speed-up optimization
     def objective_jac(w: np.ndarray) -> np.ndarray:
         turnover_grad = (w - prev_weights) / np.sqrt(
             (w - prev_weights) ** 2 + TURNOVER_SMOOTH_EPS
         )
         return cov @ w - mu_eff + TURNOVER_PENALTY * turnover_grad
 
+
+    # 1. Sum of the weights is equal to 0 -> i.e. short exposure = long exposure
+    # 2. Leverage constraint: How much in total (as % of total current wealth)
     constraints = (
         {
             "type": "eq",
@@ -221,20 +230,24 @@ def _solve_kelly_markowitz(
     except Exception:
         return w0
 
+    # Error handling: infinite weights
     if not np.all(np.isfinite(res.x)):
+        print("Some weights are infinite,  returning baseline weights (previous period)")
         return w0
 
     w = _project_weights(res.x)
     if not np.all(np.isfinite(w)):
+        print("Some weights are infinite,  returning baseline weights (previous period)")
         return w0
 
     # Accept non-success solver status if projected candidate improves objective.
     if objective(w) > objective(w0):
+        print("Solver has not improved the portfolio profit, returning baseline weights (previous period)")
         return w0
 
     return w
 # TODO: Refit should be more flexible and I want to collect the parameters to examine stability
-def _monthly_refit_if_needed(state: State, dt: pd.Timestamp) -> None:
+def _monthly_refit(state: State, dt: pd.Timestamp) -> None:
     """Refit PCA/betas on the expanding history on month boundary."""
     ym = (int(dt.year), int(dt.month))
     if ym == state.current_year_month:
@@ -268,13 +281,7 @@ def initialise_state(data: pd.DataFrame) -> State:
         .reindex(columns=symbols)
     )
 
-    if close_wide.isna().any().any():
-        raise ValueError("Missing close prices found while constructing training matrix")
-
     close_mat = close_wide.to_numpy(dtype=float)
-    if close_mat.shape[0] < 2:
-        raise ValueError("Need at least two training dates to compute returns")
-
     returns_history = np.log(close_mat[1:] / close_mat[:-1])
     returns_history = np.where(np.isfinite(returns_history), returns_history, 0.0)
 
@@ -307,7 +314,16 @@ def initialise_state(data: pd.DataFrame) -> State:
 
 def trading_algorithm(new_data: pd.DataFrame, state: State) -> tuple[np.ndarray, State]:
     """
-    Daily strategy step:
+    Core function that implements the daily Factor-based trading strategy.
+
+    Inputs:
+    - state: an instance of the State dataclass which represents a snapshot of the portfolio
+    - new_data: a single-day pandas dataframe with OHLCV data for all 100 symbols
+
+    Outputs:
+    - trades: position adjustments for the input date, based on forecasted expected factor values
+
+    Daily trading strategy steps:
     1) monthly refit on month change using info through prior day
     2) update internal wealth/positions with realized close-to-close move
     3) append today's log returns
@@ -315,6 +331,7 @@ def trading_algorithm(new_data: pd.DataFrame, state: State) -> tuple[np.ndarray,
     5) map to symbol expected returns + covariance
     6) solve constrained Kelly-Markowitz and return trades
     """
+
     # extract day and close price information
     df = new_data[["date", "symbol", "close"]].copy()
     df["symbol"] = df["symbol"].astype(str)
@@ -324,7 +341,7 @@ def trading_algorithm(new_data: pd.DataFrame, state: State) -> tuple[np.ndarray,
 
     # Refit at first trading day of each month with history available through prior day.
     # modifies the mutable state class instance
-    _monthly_refit_if_needed(state, dt)
+    _monthly_refit(state, dt)
 
     # Update internal PnL state with realized simple returns from prior close -> current close.
     simple_r = closes_today / state.last_close - 1.0
@@ -348,7 +365,7 @@ def trading_algorithm(new_data: pd.DataFrame, state: State) -> tuple[np.ndarray,
 
     mu = state.alpha + state.beta @ f_hat # forecasted expected return
 
-    # WHY IS IT DIAGONAL? BECAUSE THE FACTORS ARE ORTHOGONAL BY DESIGN?
+    # Diagonal covariance matrix since the extracted Principal Components are orthogonal
     sigma_f = np.diag(np.maximum(f_var, FACTOR_VAR_FLOOR))
     
     # covariance matrix breaks down as a sum of factor-explained variance and idiosyncratic variance
