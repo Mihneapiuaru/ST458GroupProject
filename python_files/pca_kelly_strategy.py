@@ -64,9 +64,11 @@ class State:
     current_year_month: tuple[int, int]
 
 
-# TODO: Force the given constraints on the weights
 def _project_weights(weights: np.ndarray) -> np.ndarray:
-    """Project to the net-zero and gross-cap feasible set approximately."""
+    """Project to the absolute weight (short-selling)
+    and gross-cap feasible set approximately. This function is used to
+    stabilize the optimal weights calculated using the quadratic approximation to
+    the logarithmic utility function (Kelly-Critetion)"""
 
     w = np.asarray(weights, dtype=float).copy()
     if w.ndim != 1:
@@ -170,12 +172,30 @@ def _forecast_factors(factor_history: np.ndarray) -> tuple[np.ndarray, np.ndarra
 
     return forecasts, variances
 
-
-# TODO: Should we regularize the covariance matrix for more stable numerical optimization?
 def _solve_kelly_markowitz(
     mu: np.ndarray, cov: np.ndarray, prev_weights: np.ndarray
 ) -> np.ndarray:
-    """Solve constrained fractional Kelly-Markowitz allocation with robust fallback."""
+    """Solve constrained fractional Kelly-Markowitz allocation with robust fallback.
+    This a quadratic approximation to the utility function log(1+R_t). We also drop
+    the quadratic term w^T @ mu from the optimization, because it is negligible. We also
+    explicitly include a penalty term for the 5 basis points trading fee to prevent unproductive volume.
+    
+    Inputs:
+    - mu: expected conditional returns for all symbols. In our case, forecasted using the factor model
+    - cov: estimated covariance matrix of returns (needed for the second-order term)
+    - prev_weights: portfolio weights from previous periods, used as initial weights in the optimization.
+    The prev_weights are taken from the State instance in the walk_forward.py
+    
+    Outputs:
+    - Vector of udpated portfolio weights w, which serves as the basis for our trades. If the 
+    expected return is not improved compared to last period weights, or there are wild swings in any of the
+    calculated weights, the optimizer falls back on the previous-period weights, resulting in no active trading being done
+    during the corresponding day
+    
+    Notes:
+    - We include small constant for better numerical performance of the algorithm for smoothing the 
+    turnover penalty. """
+
     n = mu.shape[0]
     mu_eff = KELLY_FRACTION * mu  # fractional Kelly inside the objective
 
@@ -246,7 +266,7 @@ def _solve_kelly_markowitz(
         return w0
 
     return w
-# TODO: Refit should be more flexible and I want to collect the parameters to examine stability
+
 def _monthly_refit(state: State, dt: pd.Timestamp) -> None:
     """Refit PCA/betas on the expanding history on month boundary."""
     ym = (int(dt.year), int(dt.month))
