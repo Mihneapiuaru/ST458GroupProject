@@ -71,6 +71,7 @@ if __name__ == "__main__":
     df_test = df[~train_idx].copy()
 
     import example_script_PCA as example_script_PCA  # your strategy file
+    import example_script
 
     wealth_seq = walk_forward(
         example_script_PCA.trading_algorithm,

@@ -27,13 +27,14 @@ from sklearn.linear_model import LinearRegression
 from statsmodels.tsa.ar_model import AutoReg
 
 
-NUM_FACTORS = 4
-AR_LAG_SPEC: Tuple[Tuple[int, ...], ...] = ((1, 5), (2,), (1,), (30,))
+NUM_FACTORS = 3 # 3 factors has the highest PnL in 2012 validation (way above the rest) -> strange peak
+AR_LAG_SPEC: Tuple[Tuple[int, ...], ...] = ((2,), (1,), (1,2), (30,))
 
 # Allocation controls
 GROSS_CAP = 1.0
-MAX_ABS_WEIGHT = 1.0 # add leverage
-KELLY_FRACTION = 0.25
+MAX_ABS_WEIGHT = 1.0 # add leverage if needed
+KELLY_FRACTION = 0.25 # What is a Kelly Fraction?
+
 # Match walk_forward.py default transaction cost (5 bps) as a turnover penalty.
 TURNOVER_PENALTY = 0.0005
 TURNOVER_SMOOTH_EPS = 1e-8
@@ -62,9 +63,10 @@ class State:
     current_year_month: tuple[int, int]
 
 
-# TODO: What's this?
+# TODO: Force the given constraints on the weights
 def _project_weights(weights: np.ndarray) -> np.ndarray:
     """Project to the net-zero and gross-cap feasible set approximately."""
+
     w = np.asarray(weights, dtype=float).copy()
     if w.ndim != 1:
         w = w.ravel()
@@ -92,66 +94,73 @@ def _project_weights(weights: np.ndarray) -> np.ndarray:
 
 def _ar_forecast(series: np.ndarray, lags: Tuple[int, ...]) -> tuple[float, float]:
     """Fit no-intercept AR with statsmodels AutoReg and return (forecast, residual_var)."""
+
     x = np.asarray(series, dtype=float).ravel()
-    p_max = max(lags)
     n = x.shape[0]
 
-    if n <= p_max + 1:
-        if n == 0:
-            return 0.0, FACTOR_VAR_FLOOR
-        fallback_var = float(np.var(x, ddof=1)) if n > 1 else FACTOR_VAR_FLOOR
-        return float(x[-1]), max(fallback_var, FACTOR_VAR_FLOOR)
+    model = AutoReg(x, lags=list(lags), trend="n")
+    res = model.fit()
+    pred = res.predict(start=n, end=n, dynamic=False)
+    forecast = float(np.asarray(pred).ravel()[-1])
 
-    try:
-        model = AutoReg(x, lags=list(lags), trend="n")
-        res = model.fit()
+    # residual (idiosyncratic) variance of the fitted AR model -> serves as variance estimate of the factors
+    resid = np.asarray(res.resid, dtype=float).ravel()
+    dof = max(1, resid.size - int(np.asarray(res.params).size))
+    resid_var = float((resid @ resid) / dof)
 
-        pred = res.predict(start=n, end=n, dynamic=False)
-        forecast = float(np.asarray(pred).ravel()[-1])
-
-        resid = np.asarray(res.resid, dtype=float).ravel()
-        if resid.size == 0:
-            resid_var = FACTOR_VAR_FLOOR
-        else:
-            dof = max(1, resid.size - int(np.asarray(res.params).size))
-            resid_var = float((resid @ resid) / dof)
-            resid_var = max(resid_var, FACTOR_VAR_FLOOR)
-    except Exception:
-        fallback_var = float(np.var(x, ddof=1)) if n > 1 else FACTOR_VAR_FLOOR
-        return float(x[-1]), max(fallback_var, FACTOR_VAR_FLOOR)
+    # numerical stability safeguard in case where variance estimate is close to zero
+    resid_var = max(resid_var, FACTOR_VAR_FLOOR)
 
     return forecast, resid_var
 
 def _fit_factor_model(returns_history: np.ndarray) -> tuple[PCA, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Fit PCA + cross-sectional regressions on the expanding return matrix.
+    Extract factors with PCA and fit a regression on each symbol returns series to extract factor betas and alphas.
+
+    Input:
+    returns_history: time series numpy array of logarithmic (or simple) returns of shape num_days x num_symbols
 
     Returns:
       pca_model, factor_history, alpha, beta, idio_var
+      (scikit-learn pca model object, time series of the principcal components, symbol alphas and sensitivities,
+      idiosyncratic variance estimate for each symbol)
+
     """
+
+    # construct factor series (our independent variables)
     pca_model = PCA(n_components=NUM_FACTORS)
     factor_history = pca_model.fit_transform(returns_history)
 
     t, k = factor_history.shape
-    if k != NUM_FACTORS:
-        raise ValueError(f"Expected {NUM_FACTORS} factors, got {k}")
+    reg = LinearRegression(fit_intercept=False)
 
-    reg = LinearRegression(fit_intercept=True)
+    # fits the same regression for each column of returns_history (i.e. each ticker symbol)
     reg.fit(factor_history, returns_history)
     fitted = reg.predict(factor_history)
 
-    alpha = np.asarray(reg.intercept_, dtype=float)  # (n,)
-    beta = np.asarray(reg.coef_, dtype=float)  # (n, k)
+    alpha = np.asarray(reg.intercept_, dtype=float)  # (nun_symbols,)
+    beta = np.asarray(reg.coef_, dtype=float)  # (nun_symbols, num_factors)
 
+    # standard idiosyncratic variance estimator (sum_of_squared_residuals / #degrees_of_freedom)
     resid = returns_history - fitted
-    dof = max(1, t - k - 1)
+    dof = t - k - 1
     idio_var = np.sum(resid * resid, axis=0) / dof
+
+    # numerical stability safeguard (for each symbol)
     idio_var = np.maximum(idio_var, IDIO_VAR_FLOOR)
 
     return pca_model, factor_history, alpha, beta, idio_var
 
 def _forecast_factors(factor_history: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Forecast each factor one step ahead and estimate innovation variances."""
+    """Forecast each factor one step ahead and estimate variances.
+    
+    Inputs:
+    - factor_history: numpy array of fitted PCA factors time series of dimensions num_periods x num_factors
+    
+    Output:
+    - forecasts: numpy array of one-step-ahead forecasts of all factors
+    - variances: factor variance estimated  (see _ar_forecast for formula)"""
+    
     forecasts = np.zeros(NUM_FACTORS, dtype=float)
     variances = np.zeros(NUM_FACTORS, dtype=float)
 
@@ -161,20 +170,7 @@ def _forecast_factors(factor_history: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return forecasts, variances
 
 
-# TODO: What does this do?
-def _regularize_covariance(cov: np.ndarray) -> np.ndarray:
-    cov = 0.5 * (cov + cov.T)
-
-    diag = np.diag(cov).copy()
-    floor_add = np.maximum(IDIO_VAR_FLOOR - diag, 0.0)
-    if np.any(floor_add > 0):
-        cov[np.diag_indices_from(cov)] += floor_add
-
-    cov[np.diag_indices_from(cov)] += COV_JITTER
-
-    return cov
-
-
+# TODO: Should we regularize the covariance matrix for more stable numerical optimization?
 def _solve_kelly_markowitz(
     mu: np.ndarray, cov: np.ndarray, prev_weights: np.ndarray
 ) -> np.ndarray:
@@ -182,7 +178,6 @@ def _solve_kelly_markowitz(
     n = mu.shape[0]
     mu_eff = KELLY_FRACTION * mu  # fractional Kelly inside the objective
 
-    cov = _regularize_covariance(cov)
     w0 = _project_weights(prev_weights)
 
     def objective(w: np.ndarray) -> float:
@@ -238,33 +233,6 @@ def _solve_kelly_markowitz(
         return w0
 
     return w
-
-
-# TODO: Is this a necessary function?
-def _align_new_data(new_data: pd.DataFrame, state: State) -> tuple[pd.Timestamp, np.ndarray]:
-    """Return (date, closes in state symbol order) for a single-day input frame."""
-    if new_data["date"].nunique() != 1:
-        raise ValueError("new_data must contain exactly one unique date")
-
-    df = new_data[["date", "symbol", "close"]].copy()
-    df["symbol"] = df["symbol"].astype(str)
-    df["_idx"] = df["symbol"].map(state.symbol_to_idx)
-
-    if df["_idx"].isna().any():
-        missing = sorted(df.loc[df["_idx"].isna(), "symbol"].unique().tolist())
-        raise ValueError(f"Unknown symbols in new_data: {missing}")
-
-    df = df.sort_values("_idx")
-    closes = df["close"].to_numpy(dtype=float)
-
-    if closes.shape[0] != len(state.symbols):
-        raise ValueError(
-            f"Expected {len(state.symbols)} symbols for new_data, got {closes.shape[0]}"
-        )
-
-    dt = pd.to_datetime(df["date"].iloc[0])
-    return dt, closes
-
 # TODO: Refit should be more flexible and I want to collect the parameters to examine stability
 def _monthly_refit_if_needed(state: State, dt: pd.Timestamp) -> None:
     """Refit PCA/betas on the expanding history on month boundary."""
@@ -347,9 +315,15 @@ def trading_algorithm(new_data: pd.DataFrame, state: State) -> tuple[np.ndarray,
     5) map to symbol expected returns + covariance
     6) solve constrained Kelly-Markowitz and return trades
     """
-    dt, closes_today = _align_new_data(new_data, state)
+    # extract day and close price information
+    df = new_data[["date", "symbol", "close"]].copy()
+    df["symbol"] = df["symbol"].astype(str)
+    df["_idx"] = df["symbol"].map(state.symbol_to_idx)
+    closes_today = df["close"].to_numpy(dtype=float)
+    dt = pd.to_datetime(df["date"].iloc[0])
 
     # Refit at first trading day of each month with history available through prior day.
+    # modifies the mutable state class instance
     _monthly_refit_if_needed(state, dt)
 
     # Update internal PnL state with realized simple returns from prior close -> current close.
@@ -361,21 +335,26 @@ def trading_algorithm(new_data: pd.DataFrame, state: State) -> tuple[np.ndarray,
 
     # Append today's log returns to expanding history.
     log_r = np.log(closes_today / state.last_close)
-    log_r = np.where(np.isfinite(log_r), log_r, 0.0)
+    log_r = np.where(np.isfinite(log_r), log_r, 0.0) # Why do we do this?
+
     state.returns_history = np.vstack([state.returns_history, log_r[None, :]])
 
-    # Today's factor realization under current active PCA basis.
+    # Today's factor realization under current active PCA basis. (Is this applying the factor loadings?)
     factor_today = state.pca_model.transform(log_r.reshape(1, -1))[0]
     state.factor_history = np.vstack([state.factor_history, factor_today[None, :]])
 
     # Daily AR factor updates and one-step factor forecast.
     f_hat, f_var = _forecast_factors(state.factor_history)
 
-    mu = state.alpha + state.beta @ f_hat
+    mu = state.alpha + state.beta @ f_hat # forecasted expected return
+
+    # WHY IS IT DIAGONAL? BECAUSE THE FACTORS ARE ORTHOGONAL BY DESIGN?
     sigma_f = np.diag(np.maximum(f_var, FACTOR_VAR_FLOOR))
+    
+    # covariance matrix breaks down as a sum of factor-explained variance and idiosyncratic variance
     cov = state.beta @ sigma_f @ state.beta.T + np.diag(np.maximum(state.idio_var, IDIO_VAR_FLOOR))
 
-    # Degenerate case: if wealth is depleted, flatten.
+    # Degenerate case: if wealth is practically zero, flatten all positions.
     if state.wealth <= WEALTH_FLOOR:
         target_positions = np.zeros_like(state.positions)
         trades = target_positions - state.positions
@@ -383,16 +362,14 @@ def trading_algorithm(new_data: pd.DataFrame, state: State) -> tuple[np.ndarray,
         state.target_weights = np.zeros_like(state.target_weights)
         state.last_close = closes_today
         return trades.astype(float), state
-
     # Convert optimization weights to target dollar positions.
-    current_weights = np.zeros_like(state.positions)
-    if state.wealth > WEALTH_FLOOR:
+    else:
         current_weights = state.positions / state.wealth
         current_weights = np.where(np.isfinite(current_weights), current_weights, 0.0)
 
+    # Kelly-optimal trades construction
     opt_weights = _solve_kelly_markowitz(mu=mu, cov=cov, prev_weights=current_weights)
     target_positions = opt_weights * state.wealth
-
     trades = target_positions - state.positions
 
     state.positions = target_positions
