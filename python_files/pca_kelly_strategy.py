@@ -31,7 +31,7 @@ NUM_FACTORS = 3 # 3 factors has the highest PnL in 2012 validation (way above th
 AR_LAG_SPEC: Tuple[Tuple[int, ...], ...] = ((2,), (1,), (1,2))
 
 # Allocation controls
-GROSS_CAP = 1.0 # add leverage if needed
+GROSS_CAP = 1.0 # add leverage if needed (GROSS_CAP = 1.0 means no short-selling)
 MAX_ABS_WEIGHT = 1.0 # maximal weight put on one asset (long or short)
 KELLY_FRACTION = 0.25 # What is a Kelly Fraction?
 

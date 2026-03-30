@@ -47,7 +47,7 @@ def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
             price = new_data["close"].to_numpy()
 
             # percentage price difference compared to yesterday
-            r1d = price / price_lag1 - 1.0
+            r1d = np.log(price / price_lag1) #- 1.0
 
             # TODO: We are using simple returns -> they should not sum up like this no?
             daily_pnl[i] = np.sum(positions * r1d) - cost_rate * np.sum(np.abs(trades))
