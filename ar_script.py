@@ -92,6 +92,19 @@ def rolling_regression(data: pd.DataFrame,
                         index=data.iloc[(w+k):, :].index)
     return res
 
+def multiple_apply_regression(data: pd.DataFrame, 
+                              symbols: list[str],
+                              features: list[str],
+                              model, w: int=252, k: int=1):
+    forecasts = []
+    for symbol in symbols:
+        # Find current forecasted values
+        curr_reg = rolling_regression(data, symbol, features, model, w, k)
+        # Append results to the list
+        forecasts.append(curr_reg)
+    
+    return forecasts
+
 
 
 
