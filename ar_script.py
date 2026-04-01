@@ -40,19 +40,6 @@ def rolling_ar_forecast(data: pd.DataFrame,
     
     return df_forecasts
 
-def rolling_var_forecast(data: pd.DataFrame,
-                         w: int=252,
-                         k: int=1,
-                         p: int=1) -> pd.DataFrame:
-    # Find the variables
-    arr_data = np.array(data)
-    n = data.shape[0]
-    d = data.shape[1]
-    
-    # Empty array to hold forecasted values
-    forecasts = np.zeros((n-k-w+1, d))
-
-
 def multiple_forecasts(data: pd.DataFrame,
                        symbols: list[str],
                        reg_model,
