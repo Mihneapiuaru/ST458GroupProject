@@ -57,6 +57,7 @@ def sr_from_wealth(wealth: np.ndarray):
 if __name__ == "__main__":
     df = pd.read_csv("df_train.csv")
     df["date"] = pd.to_datetime(df["date"]).dt.date
+    df = df[df["date"] < pd.to_datetime("2013-01-01").date()]
 
     train_idx = df["date"] < pd.to_datetime("2012-01-01").date()
     df_train = df[train_idx].copy()

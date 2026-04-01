@@ -7,7 +7,7 @@ import pandas as pd
 from statsmodels.tsa.ar_model import AutoReg
 
 NUM_SYMBOLS = 100
-FITTING_WINDOW = 252
+FITTING_WINDOW = 126
 K_STEP_RETURNS = 1
 NUMBER_POSITIONS = 2
 K_RANK = NUMBER_POSITIONS//2
@@ -54,7 +54,7 @@ def initialise_state(data: pd.DataFrame) -> State:
 
     # Keep the most recent dates for fitting
     n = df_wide.shape[0]
-    df_prices_recent = df_wide.iloc[(n-FITTING_WINDOW-1): n, :][symbols].copy() # Reorder columns to match symbols order
+    df_prices_recent = df_wide.iloc[(n-FITTING_WINDOW-1):, :][symbols].copy() # Reorder columns to match symbols order
 
     # Calculate returns
     df_simple_returns = (
