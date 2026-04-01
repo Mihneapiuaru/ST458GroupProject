@@ -42,6 +42,18 @@ def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
     return wealth_seq
 
 
+def sr_from_wealth(wealth: np.ndarray):
+        # Add 1 as initial wealth
+        wealth_seq_fin = np.insert(wealth, 0, 1.0)
+        # Empty array to hold daily returns
+        daily_returns = np.zeros(len(wealth), dtype=float)
+        for t in range(1, len(wealth_seq_fin)):
+            daily_returns[t-1] += wealth_seq_fin[t]/wealth_seq_fin[t-1] - 1 # Find return of day t
+        # Find Sharpe ratio
+        sr = np.mean(daily_returns)/np.std(daily_returns, ddof=1) * np.sqrt(252)
+        return sr
+
+
 if __name__ == "__main__":
     df = pd.read_csv("df_train.csv")
     df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -59,5 +71,7 @@ if __name__ == "__main__":
         df_test,
         cost_rate=0.0005,
     )
+    annualized_sr = sr_from_wealth(wealth_seq)
 
     print("log wealth =", np.log(wealth_seq[-1]) if wealth_seq[-1] > 0 else -np.inf)
+    print("annualized Sharpe Ratio =", annualized_sr)
