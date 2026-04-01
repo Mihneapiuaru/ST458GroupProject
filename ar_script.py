@@ -32,13 +32,26 @@ def rolling_ar_forecast(data: pd.DataFrame,
         # Find forecast
         curr_forecast = ar_p.forecast(k)
         # Add the k-step forecats
-        forecasts[t-w] = curr_forecast[k-1]
+        forecasts[t-w] += curr_forecast[k-1]
 
     df_forecasts = pd.DataFrame({'forecast': forecasts,
                                 endog: endog_arr[(w+k-1):]},
                                 index=data.iloc[(w+k-1):, :].index)
     
     return df_forecasts
+
+def rolling_var_forecast(data: pd.DataFrame,
+                         w: int=252,
+                         k: int=1,
+                         p: int=1) -> pd.DataFrame:
+    # Find the variables
+    arr_data = np.array(data)
+    n = data.shape[0]
+    d = data.shape[1]
+    
+    # Empty array to hold forecasted values
+    forecasts = np.zeros((n-k-w+1, d))
+
 
 def multiple_forecasts(data: pd.DataFrame,
                        symbols: list[str],
