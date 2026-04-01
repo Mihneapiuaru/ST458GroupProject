@@ -41,17 +41,17 @@ def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
 
     return wealth_seq
 
-
+# Will remove this before submitting, it just helps with calculating SR
 def sr_from_wealth(wealth: np.ndarray):
-        # Add 1 as initial wealth
-        wealth_seq_fin = np.insert(wealth, 0, 1.0)
-        # Empty array to hold daily returns
-        daily_returns = np.zeros(len(wealth), dtype=float)
-        for t in range(1, len(wealth_seq_fin)):
-            daily_returns[t-1] += wealth_seq_fin[t]/wealth_seq_fin[t-1] - 1 # Find return of day t
-        # Find Sharpe ratio
-        sr = np.mean(daily_returns)/np.std(daily_returns, ddof=1) * np.sqrt(252)
-        return sr
+    # Add 1 as initial wealth
+    wealth_seq_fin = np.insert(wealth, 0, 1.0)
+    # Empty array to hold daily returns
+    daily_returns = np.zeros(len(wealth), dtype=float)
+    for t in range(1, len(wealth_seq_fin)):
+        daily_returns[t-1] += wealth_seq_fin[t]/wealth_seq_fin[t-1] - 1 # Find return of day t
+    # Find Sharpe ratio
+    sr = np.mean(daily_returns)/np.std(daily_returns, ddof=1) * np.sqrt(252)
+    return sr
 
 
 if __name__ == "__main__":
@@ -62,11 +62,11 @@ if __name__ == "__main__":
     df_train = df[train_idx].copy()
     df_test = df[~train_idx].copy()
 
-    import example_script  # your strategy file
+    import ar1_strategy  # your strategy file
 
     wealth_seq = walk_forward(
-        example_script.trading_algorithm,
-        example_script.initialise_state,
+        ar1_strategy.ar_trading_algorithm,
+        ar1_strategy.initialise_state,
         df_train,
         df_test,
         cost_rate=0.0005,
@@ -75,3 +75,4 @@ if __name__ == "__main__":
 
     print("log wealth =", np.log(wealth_seq[-1]) if wealth_seq[-1] > 0 else -np.inf)
     print("annualized Sharpe Ratio =", annualized_sr)
+    print("Wealth on original scale =", wealth_seq[-1])
