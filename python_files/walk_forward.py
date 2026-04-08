@@ -57,21 +57,31 @@ def sr_from_wealth(wealth: np.ndarray):
 if __name__ == "__main__":
     df = pd.read_csv("df_train.csv")
     df["date"] = pd.to_datetime(df["date"]).dt.date
-    df = df[df["date"] < pd.to_datetime("2013-01-01").date()]
+    #df = df[df["date"] < pd.to_datetime("2013-01-01").date()]
 
-    train_idx = df["date"] < pd.to_datetime("2012-01-01").date()
+    train_idx = df["date"] < pd.to_datetime("2013-01-01").date()
     df_train = df[train_idx].copy()
     df_test = df[~train_idx].copy()
 
-    import ar1_strategy  # your strategy file
+    import pca_jiri_strat
+    import ar1_strategy
+    import wenqiang_ma_strat
+    import time
+
+    # Measure execution time
+    initial_time = time.time()
 
     wealth_seq = walk_forward(
-        ar1_strategy.ar_trading_algorithm,
-        ar1_strategy.initialise_state,
+        pca_jiri_strat.trading_algorithm,
+        pca_jiri_strat.initialise_state,
         df_train,
         df_test,
         cost_rate=0.0005,
     )
+
+    print("Total runtime =", time.time()-initial_time, "s")
+
+    # Calculate SR
     annualized_sr = sr_from_wealth(wealth_seq)
 
     print("log wealth =", np.log(wealth_seq[-1]) if wealth_seq[-1] > 0 else -np.inf)

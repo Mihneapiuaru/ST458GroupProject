@@ -168,8 +168,8 @@ def k_ranks(arr: np.ndarray,
     return (k_smallest, k_largest)
 
 
-def ar_trading_algorithm(new_data: pd.DataFrame, 
-                         state: State) -> Tuple[np.ndarray, State]:
+def trading_algorithm(new_data: pd.DataFrame, 
+                      state: State) -> Tuple[np.ndarray, State]:
     """Implements trading algorithm based on AutoRegressive modelling forecasts.
 
     Args:
