@@ -42,7 +42,7 @@ def walk_forward(strategy, initialiser, df_train, df_test, cost_rate=0.0005):
     return wealth_seq
 
 # Will remove this before submitting, it just helps with calculating SR
-def sr_from_wealth(wealth: np.ndarray):
+def sr_from_wealth(wealth: np.ndarray, rf: float=0):
     # Add 1 as initial wealth
     wealth_seq_fin = np.insert(wealth, 0, 1.0)
     # Empty array to hold daily returns
@@ -50,7 +50,7 @@ def sr_from_wealth(wealth: np.ndarray):
     for t in range(1, len(wealth_seq_fin)):
         daily_returns[t-1] += wealth_seq_fin[t]/wealth_seq_fin[t-1] - 1 # Find return of day t
     # Find Sharpe ratio
-    sr = np.mean(daily_returns)/np.std(daily_returns, ddof=1) * np.sqrt(252)
+    sr = (np.mean(daily_returns) - rf)/np.std(daily_returns, ddof=1) * np.sqrt(252)
     return sr
 
 
@@ -72,17 +72,19 @@ if __name__ == "__main__":
     initial_time = time.time()
 
     wealth_seq = walk_forward(
-        pca_jiri_strat.trading_algorithm,
-        pca_jiri_strat.initialise_state,
+        ar1_strategy.trading_algorithm,
+        ar1_strategy.initialise_state,
         df_train,
         df_test,
         cost_rate=0.0005,
     )
 
-    print("Total runtime =", time.time()-initial_time, "s")
+    print("Total runtime =", f"{time.time()-initial_time}s")
 
     # Calculate SR
-    annualized_sr = sr_from_wealth(wealth_seq)
+    yearly_rf = 0.05
+    daily_rf = (1+yearly_rf) ** (1/365) - 1
+    annualized_sr = sr_from_wealth(wealth_seq, daily_rf)
 
     print("log wealth =", np.log(wealth_seq[-1]) if wealth_seq[-1] > 0 else -np.inf)
     print("annualized Sharpe Ratio =", annualized_sr)
