@@ -3,11 +3,11 @@
 ar1_strategy.py
 
 Strategy Description:
-- Save the close prices for the last W - 1 days (lagged_prices)
+- Save the close prices for the last W + 1 days (lagged_prices)
 - Compute 1 day close-close returns for the last W days (lagged_returns)
 - Fit AR(1) model on returns for each symbol using last W days and generate one day ahead forecasts
 - Go long the K largest forecasted returns and the K lowest forecasted returns
-- Target position per long = (wealth/num_symbols) * sign (sign is 1 for K largest, -1 for K lowest)
+- Target position = (wealth/num_symbols) * sign (sign is 1 for K largest, -1 for K lowest)
 - Trades = target position - current position
 
 
@@ -90,9 +90,11 @@ def initialise_state(data: pd.DataFrame) -> State:
     
     # Pivot to wide format for return calculation
     df_wide = (
-        df.pivot(index='date', 
-                 values='close', 
-                 columns='symbol')
+        df.pivot(
+            index='date', 
+            values='close', 
+            columns='symbol'
+        )
          .sort_index() # Safety check to make sure the data is in order
     )
 
@@ -102,9 +104,11 @@ def initialise_state(data: pd.DataFrame) -> State:
 
     # Calculate lagged returns
     df_simple_returns = (
-        simple_returns(df_prices_recent, 
-                       K_STEP_RETURNS, 
-                       forward=False) # Returns are lagged, so forward=False
+        simple_returns(
+            df_prices_recent,  
+            K_STEP_RETURNS, 
+            forward=False
+            )# Returns are lagged, so forward=False
     )
 
 
@@ -170,7 +174,7 @@ def k_ranks(arr: np.ndarray,
 
 def trading_algorithm(new_data: pd.DataFrame, 
                       state: State) -> Tuple[np.ndarray, State]:
-    """Implements trading algorithm based on AutoRegressive modelling forecasts.
+    """Implements trading algorithm based on AutoRegressive forecasts.
 
     Args:
         new_data (pd.DataFrame): New data with close prices.
