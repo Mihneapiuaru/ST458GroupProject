@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-GroupB.py: AR(1) Trading Algorithm
+GroupB.py Strategy: AR(1) Trading Algorithm
 
 Strategy Description:
 - Save the close prices for the last W + 1 days (lagged_prices)
-- Compute 1 day close-close returns for the last W days (lagged_returns)
-- Fit AR(1) model on returns for each symbol using last W days and generate one day ahead forecasts
-- Go long the K largest forecasted returns and the K lowest forecasted returns
+- Compute 1 day close-close returns for the last FITTING_WINDOW days (lagged_returns)
+- Fit AR(1) model on returns for each symbol using last FITTING_WINDOW days and generate one day ahead forecasts
+- Go long the K largest forecasted returns and short the K lowest forecasted returns
 - Target position = (wealth/num_symbols) * sign (sign is 1 for K largest, -1 for K lowest)
 - Trades = target position - current position
-
 
 This matches walk_forward.py’s interface:
   initialise_state(df_train) -> state
@@ -18,14 +17,17 @@ This matches walk_forward.py’s interface:
 Trades are in "wealth units" (dollar allocation).
 """
 
+# Standard library imports
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Callable
 
+# Third party imports
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.ar_model import AutoReg
 
+# Constants
 NUM_SYMBOLS = 100
 FITTING_WINDOW = 126
 K_STEP_RETURNS = 1
@@ -42,22 +44,25 @@ class State:
     wealth: float
     positions: np.ndarray
 
+### Helper functions
 
 def simple_returns(
         df: pd.DataFrame, 
         k_step: int=1, 
         forward: bool=False
  ) -> pd.DataFrame:
-    """Calculates simple returns from a wide dataframe.
+    """
+    Calculates simple returns from a wide dataframe.
 
     Args:
         df (pd.DataFrame): Dataframe with symbols as columns.
         k_step (int, optional): The horizon of returns, i.e. which lag or lead are we taking returns on. Defaults to 1 (previous day return).
-        forward (bool, optional): Whether we are taking forward returns or backward returns. Defauls to False.
+        forward (bool, optional): Whether we are taking forward returns or backward returns. Defauls to False, which means backward returns.
 
     Returns:
         pd.DataFrame: Dataframe with symbols as column, and the entries are the (close-close) returns on each date.
     """
+
     if forward:
         df_returns = df.shift(k_step)/df - 1 # If taking future returns, we divide the future value by the current value
     else:
@@ -65,81 +70,19 @@ def simple_returns(
     df_returns = df_returns.dropna() # Missing values were introduced by differencing
     return df_returns
 
-def initialise_state(data: pd.DataFrame) -> State:
-    """Initiliases the state from the training data, 
-    which keeps track of the variables we need for the trading algorithm.
-
-    Args:
-        data (pd.DataFrame): training data, in ohlcv format, with a symbol column and a date column.
-
-    Raises:
-        ValueError: Error if not all symbols are present on a trading day.
-
-    Returns:
-        State: The current state with the variables required to initiate the trading algorithm.
-    """
-    df = data.copy()
-
-    # Convert to datetime and extract the date
-    df['date'] = pd.to_datetime(df['date']).dt.date
-
-    # Sort symbols to maintain order
-    symbols = sorted(df['symbol'].unique().tolist())
-
-    if len(symbols) != NUM_SYMBOLS:
-        # Not strictly required, but keeps behavior aligned with the R template
-        raise ValueError(f"Expected {NUM_SYMBOLS} symbols, got {len(symbols)}")
-    
-    # Pivot to wide format for return calculation
-    df_wide = (
-        df.pivot(
-            index='date', 
-            values='close', 
-            columns='symbol'
-        )
-         .sort_index() # Safety check to make sure the data is in order
-    )
-
-    # Keep the most recent dates for fitting
-    n = df_wide.shape[0]
-    df_prices_recent = df_wide.iloc[(n-FITTING_WINDOW-1):, :][symbols].copy() # Reorder columns to match symbols order
-
-    # Calculate lagged returns
-    df_simple_returns = (
-        simple_returns(
-            df_prices_recent,  
-            K_STEP_RETURNS, 
-            forward=False
-        )# Returns are lagged, so forward=False
-    )
-
-    # Construct lagged prices, most recent date at the last entry
-    lagged_prices = np.array(df_prices_recent)
-
-    # Construct lagged returns, most recent date at the last entry
-    lagged_returns = np.array(df_simple_returns)
-
-    # Initiate positions
-    positions = np.zeros(NUM_SYMBOLS, dtype=float)
-
-    return State(symbols=symbols, 
-                 lagged_prices=lagged_prices, 
-                 lagged_returns=lagged_returns, 
-                 wealth=1.0, 
-                 positions=positions)
-
-
 def ar_forecast(
         data: np.ndarray, 
-        reg_model, 
+        reg_model: Callable, 
         k_step: int, 
         **kwargs
  ) -> float:
-    """Produces univariate autoregressive modelling forecasts. Works with any univariate model satisfying statsmodels API.
+    """
+    Produces univariate autoregressive modelling forecasts. 
+    Works with any univariate model satisfying statsmodels API.
 
     Args:
         data (np.ndarray): Series we forecast.
-        reg_model (_type_): The autoregressive model we want to use, e.g. AutoReg or SARIMAX.
+        reg_model (Callable): The autoregressive model we want to use, e.g. AutoReg.
         k_step (int): Forecast horizon.
 
     Returns:
@@ -158,7 +101,8 @@ def ar_forecast(
     
 def k_ranks(arr: np.ndarray, k: int) -> \
         Tuple[np.ndarray, np.ndarray]:
-    """Returns the indices of the k-smallest entries and k-largest entries of an array .
+    """
+    Returns the indices corresponding to the k-smallest entries and k-largest entries of an array .
 
     Args:
         arr (np.ndarray): Array from which we want to identify the indices of the k-smallest values and k-largest values.
@@ -176,37 +120,107 @@ def k_ranks(arr: np.ndarray, k: int) -> \
     return (k_smallest, k_largest)
 
 
-def trading_algorithm(new_data: pd.DataFrame, state: State) -> \
-        Tuple[np.ndarray, State]:
-    """Implements trading algorithm based on AutoRegressive forecasts.
+### Main functions
+
+def initialise_state(data: pd.DataFrame) -> State:
+    """
+    Initiliases the state from the training data, which keeps track 
+    of the variables we need for the trading algorithm.
 
     Args:
-        new_data (pd.DataFrame): New data with close prices.
+        data (pd.DataFrame): training data, in ohlcv format, with a symbol column and a date column.
+
+    Raises:
+        ValueError: Error if not all symbols are present on a trading day.
+
+    Returns:
+        State: The current state with the variables required to initiate the trading algorithm.
+    """
+
+    df = data.copy()
+
+    # Convert to datetime
+    df['date'] = pd.to_datetime(df['date']).dt.date
+
+    # Sort symbols to maintain order
+    symbols = sorted(df['symbol'].unique().tolist())
+
+    if len(symbols) != NUM_SYMBOLS:
+        # Not strictly required, but keeps behavior aligned with the R template
+        raise ValueError(f"Expected {NUM_SYMBOLS} symbols, got {len(symbols)}")
+    
+    # Pivot to wide format for return calculation
+    df_wide = (
+        df.pivot(
+            index='date', 
+            values='close', 
+            columns='symbol'
+        )
+        .sort_index() # Safety check to make sure the data is in order
+    )
+
+    # Keep the most recent FITTING_WINDOW + 1 dates for fitting
+    n = df_wide.shape[0]
+    df_prices_recent = df_wide.iloc[(n-FITTING_WINDOW-1):, :][symbols].copy() # Reorder columns to match symbols order
+
+    # Calculate lagged returns
+    df_simple_returns = (
+        simple_returns(
+            df_prices_recent,  
+            K_STEP_RETURNS, 
+            forward=False # Returns are lagged, so forward=False
+        )
+    )
+
+    # Construct lagged prices, most recent date at the last entry
+    lagged_prices = np.array(df_prices_recent)
+
+    # Construct lagged returns, most recent date at the last entry
+    lagged_returns = np.array(df_simple_returns)
+
+    # Initiate positions
+    positions = np.zeros(NUM_SYMBOLS, dtype=float)
+
+    return State(
+        symbols=symbols, 
+        lagged_prices=lagged_prices, 
+        lagged_returns=lagged_returns, 
+        wealth=1.0, 
+        positions=positions
+    )
+
+def trading_algorithm(new_data: pd.DataFrame, state: State) -> \
+        Tuple[np.ndarray, State]:
+    """
+    Implements trading algorithm based on AR(1) forecasts.
+
+    Args:
+        new_data (pd.DataFrame): New data containing close prices.
         state (State): Current state.
 
     Raises:
         ValueError: If not all symbols are present.
 
     Returns:
-        Tuple[np.ndarray, State]: Trades, update state.
+        Tuple[np.ndarray, State]: Trades, updated state.
     """
     
     # Shift lagged prices one date down
-    state.lagged_prices[:FITTING_WINDOW, :] = state.lagged_prices[1:(FITTING_WINDOW+1), :]
+    state.lagged_prices[:FITTING_WINDOW, :] = state.lagged_prices[1:(FITTING_WINDOW + 1), :]
 
     # Shift lagged returns one day down
     state.lagged_returns[:(FITTING_WINDOW-1), :] = state.lagged_returns[1:FITTING_WINDOW, :]
 
     new_data = new_data.copy()
     new_symbols = new_data["symbol"].unique().tolist()
-    if state.symbols != new_symbols: # Checks whether the symbols are in sorted order
+    if state.symbols != new_symbols: # Check whether the symbols are in sorted order
         # Enforce symbols to be in correct order
         new_data["symbol"] = new_data["symbol"].astype(str)
         sym_rank = {s: i for i, s in enumerate(state.symbols)}
         new_data["_r"] = new_data["symbol"].map(sym_rank)
         new_data = new_data.sort_values("_r").drop(columns=["_r"]).reset_index(drop=True)
 
-    # Extract closes in current order
+    # Extract closes
     closes_today = new_data["close"].to_numpy(dtype=float)
 
     # Check all symbols are present
