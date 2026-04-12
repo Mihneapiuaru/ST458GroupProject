@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ar1_strategy.py
+GroupB.py: AR(1) Trading Algorithm
 
 Strategy Description:
 - Save the close prices for the last W + 1 days (lagged_prices)

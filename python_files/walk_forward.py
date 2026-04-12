@@ -64,7 +64,7 @@ if __name__ == "__main__":
     df_test = df[~train_idx].copy()
 
     import pca_jiri_strat
-    import ar1_strategy
+    import GroupB
     import wenqiang_ma_strat
     import time
 
@@ -72,8 +72,8 @@ if __name__ == "__main__":
     initial_time = time.time()
 
     wealth_seq = walk_forward(
-        ar1_strategy.trading_algorithm,
-        ar1_strategy.initialise_state,
+        GroupB.trading_algorithm,
+        GroupB.initialise_state,
         df_train,
         df_test,
         cost_rate=0.0005,
